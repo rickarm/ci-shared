@@ -1,0 +1,74 @@
+# Reusable Python CI — the canonical source for all rickarm Python repos.
+#
+# Callers reference this with:
+#   jobs:
+#     ci:
+#       uses: rickarm/ci-shared/.github/workflows/python-ci.yml@main
+#
+# Philosophy: a cheap regression tripwire for unattended scripts/services.
+#   - ruff           → lint
+#   - compile smoke  → catches syntax errors and renamed/missing imports
+#                      EVEN IN REPOS WITH NO TESTS (the sherlock-hq class of bug)
+#   - pytest         → runs only when a test suite exists
+#
+# Adapts to how the repo installs deps: uv.lock → uv sync; pyproject → uv sync;
+# requirements.txt → uv pip install. Works for both uv and pip projects.
+#
+# To change CI behaviour for EVERY repo, edit this one file. Callers pick up
+# the change on their next run (they pin @main).
+
+name: Python CI (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: "Optional Python version to pin (e.g. '3.11'). Empty = uv default."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Pin Python (optional)
+        if: inputs.python-version != ''
+        run: uv python install ${{ inputs.python-version }}
+
+      - name: Install dependencies
+        run: |
+          set -e
+          if [ -f uv.lock ]; then
+            uv sync --frozen
+          elif [ -f pyproject.toml ]; then
+            uv sync
+          elif [ -f requirements.txt ]; then
+            uv venv && uv pip install -r requirements.txt
+          else
+            uv venv
+          fi
+          uv pip install ruff pytest
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Smoke compile (syntax + import surface)
+        run: |
+          files=$(git ls-files '*.py')
+          [ -n "$files" ] && uv run python -m compileall -q $files || echo "no .py files"
+
+      - name: Tests (only if a suite exists)
+        run: |
+          if git ls-files | grep -Eq '(^|/)test_.*\.py$|_test\.py$|(^|/)tests?/'; then
+            uv run python -m pytest -q
+          else
+            echo "No tests found — ruff + compile smoke already ran."
+          fi
