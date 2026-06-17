@@ -27,6 +27,16 @@ on:
         required: false
         type: string
         default: ""
+      all-extras:
+        description: "Install all optional-dependency extras (uv sync --all-extras). Set true when test deps live behind a pyproject extra rather than the default group."
+        required: false
+        type: boolean
+        default: false
+      test-env:
+        description: "Extra environment variables for the lint/compile/test steps, one KEY=VALUE per line. For THROWAWAY CI values only (e.g. a dummy API key a config requires at import) — never real secrets."
+        required: false
+        type: string
+        default: ""
 
 jobs:
   test:
@@ -43,13 +53,19 @@ jobs:
         if: inputs.python-version != ''
         run: uv python install ${{ inputs.python-version }}
 
+      - name: Export test env (optional)
+        if: inputs.test-env != ''
+        run: printf '%s\n' "${{ inputs.test-env }}" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: |
           set -e
+          extras=""
+          [ "${{ inputs.all-extras }}" = "true" ] && extras="--all-extras"
           if [ -f uv.lock ]; then
-            uv sync --frozen
+            uv sync --frozen $extras
           elif [ -f pyproject.toml ]; then
-            uv sync
+            uv sync $extras
           elif [ -f requirements.txt ]; then
             uv venv && uv pip install -r requirements.txt
           else
